@@ -1,38 +1,47 @@
 import streamlit as st
 import requests
+from bs4 import BeautifulSoup
 
-# Set page config
 st.set_page_config(page_title="NSE F&O Dashboard", layout="wide")
 st.title("📈 NSE F&O Market Dashboard")
 
-# NSE headers to avoid 403 errors
+# Headers to mimic browser
 headers = {
     "User-Agent": "Mozilla/5.0",
-    "Accept": "application/json",
+    "Accept": "text/html",
     "Referer": "https://www.nseindia.com"
 }
 
-# Function to fetch F&O gainers
-def get_fno_gainers():
-    url = "https://www.nseindia.com/api/live-analysis-variations?index=fno_gainers"
-    session = requests.Session()
-    session.get("https://www.nseindia.com", headers=headers)
-    response = session.get(url, headers=headers)
-    return response.json()['data'][:5]
+session = requests.Session()
+session.get("https://www.nseindia.com", headers=headers)
 
-# Function to fetch F&O losers
-def get_fno_losers():
-    url = "https://www.nseindia.com/api/live-analysis-variations?index=fno_losers"
-    session = requests.Session()
-    session.get("https://www.nseindia.com", headers=headers)
+# Function to scrape F&O gainers and losers
+def fetch_fno_gainers_losers():
+    url = "https://www.nseindia.com/live_market/dynaContent/live_watch/stock_watch/mostActiveStock.jsp?flag=F"
     response = session.get(url, headers=headers)
-    return response.json()['data'][:5]
+    soup = BeautifulSoup(response.content, "html.parser")
+    table = soup.find("table", {"id": "dataTable"})
+    rows = table.find_all("tr")[1:]  # Skip header
+
+    gainers = []
+    losers = []
+
+    for row in rows:
+        cols = row.find_all("td")
+        symbol = cols[0].text.strip()
+        change = float(cols[4].text.strip())
+        if change > 0:
+            gainers.append((symbol, change))
+        elif change < 0:
+            losers.append((symbol, change))
+
+    gainers = sorted(gainers, key=lambda x: x[1], reverse=True)[:5]
+    losers = sorted(losers, key=lambda x: x[1])[:5]
+    return gainers, losers
 
 # Function to fetch option chain data
 def fetch_option_chain(symbol="NIFTY"):
     url = f"https://www.nseindia.com/api/option-chain-indices?symbol={symbol}"
-    session = requests.Session()
-    session.get("https://www.nseindia.com", headers=headers)
     response = session.get(url, headers=headers)
     return response.json()
 
@@ -60,23 +69,18 @@ st.header("Market Breadth")
 st.markdown("**Advances:** 2,720 | **Declines:** 902")
 st.success("Pre-open sentiment: Positive → Likely Market Opening: Bullish bias")
 
-# Top F&O Gainers
-st.header("🔥 Top F&O Gainers")
+# F&O Gainers and Losers
+st.header("🔥 Top F&O Gainers & 🔻 Losers")
 try:
-    gainers = get_fno_gainers()
-    for stock in gainers:
-        st.markdown(f"- **{stock['symbol']}** – **{stock['netPrice']}%**")
+    gainers, losers = fetch_fno_gainers_losers()
+    st.subheader("Top Gainers")
+    for symbol, change in gainers:
+        st.markdown(f"- **{symbol}** – **+{change}%**")
+    st.subheader("Top Losers")
+    for symbol, change in losers:
+        st.markdown(f"- **{symbol}** – **{change}%**")
 except Exception as e:
-    st.error(f"Failed to fetch F&O gainers: {e}")
-
-# Top F&O Losers
-st.header("🔻 Top F&O Losers")
-try:
-    losers = get_fno_losers()
-    for stock in losers:
-        st.markdown(f"- **{stock['symbol']}** – **{stock['netPrice']}%**")
-except Exception as e:
-    st.error(f"Failed to fetch F&O losers: {e}")
+    st.error(f"Failed to fetch F&O gainers/losers: {e}")
 
 # OI Spurt Detection
 st.header("📊 Option Chain OI Spurt Detection")
