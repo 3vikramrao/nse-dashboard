@@ -1,43 +1,49 @@
-from nsepython import *
 import streamlit as st
+import requests
 
-st.set_page_config(page_title="NSE Market Dashboard", layout="wide")
-st.title("📈 NSE Market Dashboard")
+# Headers to avoid 403 errors
+headers = {
+    "User-Agent": "Mozilla/5.0",
+    "Accept": "application/json",
+    "Referer": "https://www.nseindia.com"
+}
 
-# Market Breadth (Static for now)
-st.header("Market Breadth")
-st.markdown("**Advances:** 2,720 | **Declines:** 902")
-st.success("Pre-open sentiment: Positive → Likely Market Opening: Bullish bias")
+# Function to fetch option chain data
+def fetch_option_chain(symbol="NIFTY"):
+    url = f"https://www.nseindia.com/api/option-chain-indices?symbol={symbol}"
+    session = requests.Session()
+    session.get("https://www.nseindia.com", headers=headers)  # Get cookies
+    response = session.get(url, headers=headers)
+    if response.status_code == 200:
+        return response.json()
+    else:
+        return None
 
-# Sectoral Trends (Static or use sectoral index API)
-st.header("Sectoral Trends – Top Performing Sectors")
-top_sectors = ["Artificial Intelligence & Robotics", "Renewable Energy", "Biotech & Digital Health"]
-st.markdown("- " + "\n- ".join(top_sectors))
-
-# Top Gainers
-st.header("Top 3 Gainers (<9:30 AM)")
-gainers = nse_top_gainers()
-for stock in gainers[:3]:
-    st.markdown(f"- **{stock['symbol']}** – **{stock['netPrice']}%**")
-
-# Top Losers
-st.header("Top 3 Losers (<9:30 AM)")
-losers = nse_top_losers()
-for stock in losers[:3]:
-    st.markdown(f"- **{stock['symbol']}** – **{stock['netPrice']}%**")
-
-# OI Spurt (from Option Chain)
-st.header("Top F&O Stocks with >30% OI Spurt")
-option_chain = nse_optionchain_scrapper("NIFTY")
-oi_spurt_stocks = []
-for data in option_chain['records']['data']:
-    if 'CE' in data and data['CE']['openInterest'] > 300000:  # Example threshold
-        oi_spurt_stocks.append(data['CE']['underlying'])
-
-for stock in oi_spurt_stocks[:5]:
-    st.markdown(f"- **{stock}** – High OI")
-
-# Overlap Section
-st.header("Overlap (F&O Gainers/Losers + OI Spurts)")
-overlap = set([s['symbol'] for s in gainers]) & set(oi_spurt_stocks)
-st.markdown("- " + "\n- ".join(overlap))
+# Detect OI spurts
+def detect_oi_spurts(data, threshold=30):
+    oi_spurts = []
+    for record in data['records']['data']:
+        if 'CE' in record and 'PE' in record:
+            ce = record['CE']
+            pe = record['PE']
+            if 'openInterest' in ce and 'previousOpenInterest' in ce:
+                ce_change = ((ce['openInterest'] - ce['previousOpenInterest']) / ce['previousOpenInterest']) * 100
+                if ce_change > threshold:
+                    oi_spurts.append((ce['underlying'], ce['strikePrice'], round(ce_change, 2), 'CE'))
+            if 'openInterest' in pe and 'previousOpenInterest' in pe:
+                pe_change = ((pe['openInterest'] - pe['previousOpenInterest']) / pe['previousOpenInterest']) * 100
+                if pe_change > threshold:
+                    oi_spurts.append((pe['underlying'], pe['strikePrice'], round(pe_change, 2), 'PE'))
+    return oi_spurts
+# Streamlit UI
+st.header("🔍 Option Chain OI Spurt Detection")
+data = fetch_option_chain()
+if data:
+    spurts = detect_oi_spurts(data)
+    if spurts:
+        for scrip, strike, change, side in spurts[:10]:
+            st.markdown(f"- **{scrip}** | Strike: {strike} | Side: {side} | OI Change: **{change}%**")
+    else:
+        st.info("No significant OI spurts detected above threshold.")
+else:
+    st.error("Failed to fetch option chain data.")
